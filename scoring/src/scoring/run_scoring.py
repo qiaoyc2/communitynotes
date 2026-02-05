@@ -18,7 +18,7 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from . import constants as c, contributor_state, note_ratings, note_status_history, scoring_rules
 from .constants import FinalScoringArgs, ModelResult, PrescoringArgs, ScoringArgs
-from .enums import Scorers, Topics
+from .enums import DEFAULT_ENABLED_SCORERS, Scorers, Topics
 from .gaussian_scorer import GaussianScorer
 from .matrix_factorization.normalized_loss import NormalizedLossHyperparameters
 from .mf_core_scorer import MFCoreScorer
@@ -64,6 +64,7 @@ def _get_scorers(
   pseudoraters: Optional[bool],
   useStableInitialization: bool = True,
   final: bool = False,
+  enabledScorers: Optional[Set[Scorers]] = None,
 ) -> Dict[Scorers, List[Scorer]]:
   """Instantiate all Scorer objects which should be used for note ranking.
 
@@ -74,85 +75,107 @@ def _get_scorers(
   Returns:
     Dict[Scorers, List[Scorer]] containing instantiated Scorer objects for note ranking.
   """
+  if enabledScorers is None:
+    enabledScorers = DEFAULT_ENABLED_SCORERS
+
   scorers: Dict[Scorers, List[Scorer]] = dict()
-  if final:
+  if final and Scorers.GaussianScorer in enabledScorers:
     scorers[Scorers.GaussianScorer] = [GaussianScorer(seed=seed, threads=12)]
-  scorers[Scorers.MFCoreWithTopicsScorer] = [
-    MFCoreWithTopicsScorer(
-      seed, pseudoraters, useStableInitialization=useStableInitialization, threads=12
+
+  if Scorers.MFCoreWithTopicsScorer in enabledScorers:
+    scorers[Scorers.MFCoreWithTopicsScorer] = [
+      MFCoreWithTopicsScorer(
+        seed, pseudoraters, useStableInitialization=useStableInitialization, threads=12
+      )
+    ]
+
+  if Scorers.MFCoreScorer in enabledScorers:
+    scorers[Scorers.MFCoreScorer] = [
+      MFCoreScorer(seed, pseudoraters, useStableInitialization=useStableInitialization, threads=12)
+    ]
+
+  if Scorers.MFExpansionScorer in enabledScorers:
+    scorers[Scorers.MFExpansionScorer] = [
+      MFExpansionScorer(seed, useStableInitialization=useStableInitialization, threads=12)
+    ]
+
+  if Scorers.MFExpansionPlusScorer in enabledScorers:
+    scorers[Scorers.MFExpansionPlusScorer] = [
+      MFExpansionPlusScorer(seed, useStableInitialization=useStableInitialization, threads=12)
+    ]
+
+  if Scorers.ReputationScorer in enabledScorers:
+    scorers[Scorers.ReputationScorer] = [
+      ReputationScorer(seed, useStableInitialization=useStableInitialization, threads=12)
+    ]
+
+  if Scorers.MFGroupScorer in enabledScorers:
+    # Note that index 0 is reserved, corresponding to no group assigned, so scoring group
+    # numbers begin with index 1.
+    scorers[Scorers.MFGroupScorer] = [
+      # Scoring Group 13 is currently the largest by far, so total runtime benefits from
+      # adding the group scorers in descending order so we start work on Group 13 first.
+      MFGroupScorer(
+        includedGroups={i},
+        groupId=i,
+        threads=groupScorerParalleism.get(i, 4),
+        seed=seed,
+      )
+      for i in range(groupScorerCount, 0, -1)
+      if i != trialScoringGroup
+    ]
+    scorers[Scorers.MFGroupScorer].append(
+      MFGroupScorer(
+        includedGroups={trialScoringGroup},
+        groupId=trialScoringGroup,
+        threads=groupScorerParalleism.get(trialScoringGroup, 4),
+        seed=seed,
+        noteInterceptLambda=0.03 * 30,
+        userInterceptLambda=0.03 * 5,
+        globalInterceptLambda=0.03 * 5,
+        noteFactorLambda=0.03 / 3,
+        userFactorLambda=0.03 / 4,
+        diamondLambda=0.03 * 25,
+        normalizedLossHyperparameters=NormalizedLossHyperparameters(
+          globalSignNorm=True, noteSignAlpha=None, noteNormExp=0, raterNormExp=-0.25
+        ),
+        maxFinalMFTrainError=0.16,
+        groupThreshold=0.4,
+        minMeanNoteScore=-0.01,
+        crhThreshold=0.15,
+        crhSuperThreshold=None,
+        crnhThresholdIntercept=-0.01,
+        crnhThresholdNoteFactorMultiplier=0,
+        crnhThresholdNMIntercept=-0.02,
+        crhThresholdNoHighVol=0.12,
+        crhThresholdNoCorrelated=0.12,
+        lowDiligenceThreshold=1000,
+        factorThreshold=0.4,
+        multiplyPenaltyByHarassmentScore=False,
+        minimumHarassmentScoreToPenalize=2.5,
+        tagConsensusHarassmentHelpfulRatingPenalty=10,
+        tagFilterPercentile=90,
+        incorrectFilterThreshold=1.5,
+      )
     )
-  ]
-  scorers[Scorers.MFCoreScorer] = [
-    MFCoreScorer(seed, pseudoraters, useStableInitialization=useStableInitialization, threads=12)
-  ]
-  scorers[Scorers.MFExpansionScorer] = [
-    MFExpansionScorer(seed, useStableInitialization=useStableInitialization, threads=12)
-  ]
-  scorers[Scorers.MFExpansionPlusScorer] = [
-    MFExpansionPlusScorer(seed, useStableInitialization=useStableInitialization, threads=12)
-  ]
-  scorers[Scorers.ReputationScorer] = [
-    ReputationScorer(seed, useStableInitialization=useStableInitialization, threads=12)
-  ]
-  # Note that index 0 is reserved, corresponding to no group assigned, so scoring group
-  # numbers begin with index 1.
-  scorers[Scorers.MFGroupScorer] = [
-    # Scoring Group 13 is currently the largest by far, so total runtime benefits from
-    # adding the group scorers in descending order so we start work on Group 13 first.
-    MFGroupScorer(includedGroups={i}, groupId=i, threads=groupScorerParalleism.get(i, 4), seed=seed)
-    for i in range(groupScorerCount, 0, -1)
-    if i != trialScoringGroup
-  ]
-  scorers[Scorers.MFGroupScorer].append(
-    MFGroupScorer(
-      includedGroups={trialScoringGroup},
-      groupId=trialScoringGroup,
-      threads=groupScorerParalleism.get(trialScoringGroup, 4),
-      seed=seed,
-      noteInterceptLambda=0.03 * 30,
-      userInterceptLambda=0.03 * 5,
-      globalInterceptLambda=0.03 * 5,
-      noteFactorLambda=0.03 / 3,
-      userFactorLambda=0.03 / 4,
-      diamondLambda=0.03 * 25,
-      normalizedLossHyperparameters=NormalizedLossHyperparameters(
-        globalSignNorm=True, noteSignAlpha=None, noteNormExp=0, raterNormExp=-0.25
-      ),
-      maxFinalMFTrainError=0.16,
-      groupThreshold=0.4,
-      minMeanNoteScore=-0.01,
-      crhThreshold=0.15,
-      crhSuperThreshold=None,
-      crnhThresholdIntercept=-0.01,
-      crnhThresholdNoteFactorMultiplier=0,
-      crnhThresholdNMIntercept=-0.02,
-      crhThresholdNoHighVol=0.12,
-      crhThresholdNoCorrelated=0.12,
-      lowDiligenceThreshold=1000,
-      factorThreshold=0.4,
-      multiplyPenaltyByHarassmentScore=False,
-      minimumHarassmentScoreToPenalize=2.5,
-      tagConsensusHarassmentHelpfulRatingPenalty=10,
-      tagFilterPercentile=90,
-      incorrectFilterThreshold=1.5,
+    scorers[Scorers.MFGroupScorer].append(
+      MFGroupScorer(
+        includedGroups={nmrScoringGroup},
+        strictInclusion=True,
+        groupThreshold=0.8,
+        groupId=nmrScoringGroup,
+        threads=groupScorerParalleism.get(nmrScoringGroup, 4),
+        seed=seed,
+      )
     )
-  )
-  scorers[Scorers.MFGroupScorer].append(
-    MFGroupScorer(
-      includedGroups={nmrScoringGroup},
-      strictInclusion=True,
-      groupThreshold=0.8,
-      groupId=nmrScoringGroup,
-      threads=groupScorerParalleism.get(nmrScoringGroup, 4),
-      seed=seed,
-    )
-  )
-  scorers[Scorers.MFTopicScorer] = [
-    MFTopicScorer(topicName=topic.name, seed=seed) for topic in Topics
-  ]
-  scorers[Scorers.MFMultiGroupScorer] = [
-    MFMultiGroupScorer(includedGroups={4, 5, 7, 12, 26}, groupId=1, threads=4, seed=seed),
-  ]
+
+  if Scorers.MFTopicScorer in enabledScorers:
+    scorers[Scorers.MFTopicScorer] = [MFTopicScorer(topicName=topic.name, seed=seed) for topic in Topics]
+
+  if Scorers.MFMultiGroupScorer in enabledScorers:
+    scorers[Scorers.MFMultiGroupScorer] = [
+      MFMultiGroupScorer(includedGroups={4, 5, 7, 12, 26}, groupId=1, threads=4, seed=seed),
+    ]
 
   return scorers
 
@@ -586,10 +609,11 @@ def combine_prescorer_scorer_results(
     },
   )
   return (
-    prescoringNoteModelOutput[c.prescoringNoteModelOutputTSVColumns],
-    raterParamsUnfilteredMultiScorers[c.prescoringRaterModelOutputTSVColumns],
+    prescoringNoteModelOutput.reindex(columns=c.prescoringNoteModelOutputTSVColumns),
+    raterParamsUnfilteredMultiScorers.reindex(columns=c.prescoringRaterModelOutputTSVColumns),
     prescoringMetaOutput,
   )
+
 
 
 def combine_final_scorer_results(
@@ -1218,6 +1242,9 @@ def run_prescoring(
   c.PrescoringMetaOutput,
   pd.DataFrame,
 ]:
+  if enabledScorers is None:
+    enabledScorers = DEFAULT_ENABLED_SCORERS
+
   logger.info("logging environment variables")
   for k, v in os.environ.items():
     print(f"{k}: {v}")
@@ -1226,35 +1253,37 @@ def run_prescoring(
     logger.info(get_df_info(ratings, "ratings"))
     logger.info(get_df_info(noteStatusHistory, "noteStatusHistory"))
     logger.info(get_df_info(userEnrollment, "userEnrollment"))
-  with c.time_block("Note Topic Assignment"):
-    topicModel = TopicModel()
-    (
-      noteTopicClassifierPipe,
-      seedLabels,
-      conflictedTexts,
-    ) = topicModel.train_note_topic_classifier(notes)
-    noteTopics = topicModel.get_note_topics(
-      notes,
-      [noteTopicClassifierPipe],
-      [seedLabels],
-      conflictedTextSetsForAccuracyEval=[conflictedTexts],
-    )
+  # with c.time_block("Note Topic Assignment"):
+  #   topicModel = TopicModel()
+  #   (
+  #     noteTopicClassifierPipe,
+  #     seedLabels,
+  #     conflictedTexts,
+  #   ) = topicModel.train_note_topic_classifier(notes)
+  #   noteTopics = topicModel.get_note_topics(
+  #     notes,
+  #     [noteTopicClassifierPipe],
+  #     [seedLabels],
+  #     conflictedTextSetsForAccuracyEval=[conflictedTexts],
+  #   )
+  noteTopics = pd.DataFrame({c.noteIdKey: notes[c.noteIdKey]})
 
-  logger.info(
-    f"ratings summary before PSS: {get_df_fingerprint(ratings, [c.noteIdKey, c.raterParticipantIdKey])}"
-  )
-  with c.time_block("Filter ratings by Post Selection Similarity"):
-    logger.info(f"Post Selection Similarity Prescoring: begin with {len(ratings)} ratings.")
-    ratings = apply_post_selection_similarity(notes, ratings, postSelectionSimilarityValues)
-    logger.info(f"Post Selection Similarity Prescoring: {len(ratings)} ratings remaining.")
-  logger.info(
-    f"ratings summary after PSS: {get_df_fingerprint(ratings, [c.noteIdKey, c.raterParticipantIdKey])}"
-  )
+  # logger.info(
+  #   f"ratings summary before PSS: {get_df_fingerprint(ratings, [c.noteIdKey, c.raterParticipantIdKey])}"
+  # )
+  # with c.time_block("Filter ratings by Post Selection Similarity"):
+  #   logger.info(f"Post Selection Similarity Prescoring: begin with {len(ratings)} ratings.")
+  #   ratings = apply_post_selection_similarity(notes, ratings, postSelectionSimilarityValues)
+  #   logger.info(f"Post Selection Similarity Prescoring: {len(ratings)} ratings remaining.")
+  # logger.info(
+  #   f"ratings summary after PSS: {get_df_fingerprint(ratings, [c.noteIdKey, c.raterParticipantIdKey])}"
+  # )
 
   scorers = _get_scorers(
     seed=seed,
     pseudoraters=False,
     useStableInitialization=useStableInitialization,
+    enabledScorers=enabledScorers,
   )
 
   # Attempt to convert IDs to Int64 before prescoring.  We expect this to succeed in production,
@@ -1344,9 +1373,9 @@ def run_prescoring(
   with c.time_block("Logging Prescoring Results RAM usage (after concatenation)"):
     logger.info(get_df_info(prescoringRaterModelOutput, "prescoringRaterModelOutput"))
 
-  with c.time_block("Fitting pflip model"):
-    pflipPlusModel = PFlipPlusModel(seed=seed)
-    pflipPlusModel.fit(notes, ratings, noteStatusHistory, prescoringRaterModelOutput)
+  # with c.time_block("Fitting pflip model"):
+  #   pflipPlusModel = PFlipPlusModel(seed=seed)
+  #   pflipPlusModel.fit(notes, ratings, noteStatusHistory, prescoringRaterModelOutput)
 
   # Prescoring itself is now done. We will not run final_note_scoring to check note status flips.
   if checkFlips:
@@ -1373,8 +1402,8 @@ def run_prescoring(
       useStableInitialization=useStableInitialization,
       prescoringNoteModelOutput=prescoringNoteModelOutput,
       prescoringRaterModelOutput=prescoringRaterModelOutput,
-      noteTopicClassifier=noteTopicClassifierPipe,
-      pflipClassifier=pflipPlusModel,
+      noteTopicClassifier=None, #noteTopicClassifierPipe,
+      pflipClassifier=None, #pflipPlusModel,
       prescoringMetaOutput=prescoringMetaOutput,
       checkFlips=checkFlips,
       enableNmrDueToMinStableCrhTime=enableNmrDueToMinStableCrhTime,
@@ -1386,8 +1415,8 @@ def run_prescoring(
   return (
     prescoringNoteModelOutput,
     prescoringRaterModelOutput,
-    noteTopicClassifierPipe,
-    pflipPlusModel,
+    None, #noteTopicClassifierPipe,
+    None, #pflipPlusModel,
     prescoringMetaOutput,
     scoredNotes,
   )
@@ -2034,8 +2063,9 @@ def run_scoring(
   previousAuxiliaryNoteInfo: Optional[pd.DataFrame] = None,
   previousRatingCutoffTimestampMillis: Optional[int] = 0,
 ):
-  """Runs both phases of scoring consecutively. Only for adhoc/testing use.
-  In prod, we run each phase as a separate binary.
+  """Runs Community Notes scoring.
+
+  In this project configuration we stop after prescoring and only run MFCoreScorer.
 
   Wrapper around run_prescoring, run_final_note_scoring, and run_contributor_scoring.
 
@@ -2114,42 +2144,10 @@ def run_scoring(
         prescoringMetaOutput,
         prescoringScoredNotes,
       )
-  logger.info("Starting final scoring")
-
-  scoredNotes, newNoteStatusHistory, auxiliaryNoteInfo, _ = run_final_note_scoring(
-    args,
-    notes=notes,
-    ratings=ratings,
-    noteStatusHistory=noteStatusHistory,
-    userEnrollment=userEnrollment,
-    seed=seed,
-    pseudoraters=pseudoraters,
-    enabledScorers=enabledScorers,
-    strictColumns=strictColumns,
-    runParallel=runParallel,
-    dataLoader=dataLoader,
-    useStableInitialization=useStableInitialization,
-    prescoringNoteModelOutput=prescoringNoteModelOutput,
-    prescoringRaterModelOutput=prescoringRaterModelOutput,
-    noteTopicClassifier=prescoringNoteTopicClassifier,
-    pflipClassifier=prescoringPflipClassifier,
-    prescoringMetaOutput=prescoringMetaOutput,
-    checkFlips=checkFlips,
-    previousScoredNotes=previousScoredNotes,
-    previousAuxiliaryNoteInfo=previousAuxiliaryNoteInfo,
-    previousRatingCutoffTimestampMillis=previousRatingCutoffTimestampMillis,
+  logger.info("Prescoring complete. Skipping final scoring + contributor scoring.")
+  return (
+    prescoringNoteModelOutput,
+    prescoringRaterModelOutput,
+    prescoringMetaOutput,
+    prescoringScoredNotes,
   )
-
-  logger.info("Starting contributor scoring")
-
-  helpfulnessScores = run_contributor_scoring(
-    ratings=ratings,
-    scoredNotes=scoredNotes,
-    auxiliaryNoteInfo=auxiliaryNoteInfo,
-    prescoringRaterModelOutput=prescoringRaterModelOutput,
-    noteStatusHistory=newNoteStatusHistory,
-    userEnrollment=userEnrollment,
-    strictColumns=strictColumns,
-  )
-
-  return scoredNotes, helpfulnessScores, newNoteStatusHistory, auxiliaryNoteInfo

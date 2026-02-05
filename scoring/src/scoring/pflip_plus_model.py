@@ -164,7 +164,7 @@ class PFlipPlusModel(object):
     self,
     ratingRecencyCutoffMinutes: int = 15,
     helpfulnessRaterMin: int = 1,
-    tagRaterMin: int = 5,
+    tagRaterMin: int = 1, # so that we can have some notes passed the elinimation info stage
     helpfulTagPercentile: int = 10,
     notHelpfulTagPercentile: int = 50,
     penalty: str = "l1",

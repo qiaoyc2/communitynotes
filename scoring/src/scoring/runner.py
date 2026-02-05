@@ -1,7 +1,9 @@
 import argparse
+import json
 import logging
 import os
 import sys
+from dataclasses import asdict
 
 from . import constants as c
 from .enums import scorers_from_csv
@@ -228,7 +230,12 @@ def _run_scorer(
     logger.info(f"ratings reduced from {origSize} to {len(ratings)}")
 
   # Invoke scoring and user contribution algorithms.
-  scoredNotes, helpfulnessScores, newStatus, auxNoteInfo = run_scoring(
+  (
+    prescoringNoteModelOutput,
+    prescoringRaterModelOutput,
+    prescoringMetaOutput,
+    prescoringScoredNotes,
+  ) = run_scoring(
     args,
     notes,
     ratings,
@@ -252,16 +259,36 @@ def _run_scorer(
   )
 
   # Write outputs to local disk.
-  write_tsv_local(scoredNotes, os.path.join(args.outdir, "scored_notes.tsv"))
-  write_tsv_local(helpfulnessScores, os.path.join(args.outdir, "helpfulness_scores.tsv"))
-  write_tsv_local(newStatus, os.path.join(args.outdir, "note_status_history.tsv"))
-  write_tsv_local(auxNoteInfo, os.path.join(args.outdir, "aux_note_info.tsv"))
+  write_tsv_local(
+    prescoringNoteModelOutput,
+    os.path.join(args.outdir, "prescoring_note_model_output.tsv"),
+  )
+  write_tsv_local(
+    prescoringRaterModelOutput,
+    os.path.join(args.outdir, "prescoring_rater_model_output.tsv"),
+  )
+  # Helpful for debugging / analysis but not part of the standard TSV outputs.
+  write_tsv_local(
+    prescoringScoredNotes,
+    os.path.join(args.outdir, "prescoring_scored_notes.tsv"),
+  )
+  # Meta output contains nested structures; write a compact JSON to disk.
+  with open(os.path.join(args.outdir, "prescoring_meta_output.json"), "w", encoding="utf-8") as f:
+    json.dump(asdict(prescoringMetaOutput), f, ensure_ascii=False, separators=(",", ":"), default=str)
 
   if not args.no_parquet:
-    write_parquet_local(scoredNotes, os.path.join(args.outdir, "scored_notes.parquet"))
-    write_parquet_local(helpfulnessScores, os.path.join(args.outdir, "helpfulness_scores.parquet"))
-    write_parquet_local(newStatus, os.path.join(args.outdir, "note_status_history.parquet"))
-    write_parquet_local(auxNoteInfo, os.path.join(args.outdir, "aux_note_info.parquet"))
+    write_parquet_local(
+      prescoringNoteModelOutput,
+      os.path.join(args.outdir, "prescoring_note_model_output.parquet"),
+    )
+    write_parquet_local(
+      prescoringRaterModelOutput,
+      os.path.join(args.outdir, "prescoring_rater_model_output.parquet"),
+    )
+    write_parquet_local(
+      prescoringScoredNotes,
+      os.path.join(args.outdir, "prescoring_scored_notes.parquet"),
+    )
 
 
 def main(

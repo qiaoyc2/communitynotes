@@ -212,12 +212,18 @@ def read_from_tsv(
       header=headers,
       convertNAToNone=False,
     )
-    assert len(ratings.columns.values) == len(c.ratingTSVColumns) and all(
-      ratings.columns == c.ratingTSVColumns
+
+    # Keep the on-disk schema strict (33 cols), but add a runtime helper column for prescoring
+    if "correlatedRater" not in ratings.columns:
+      ratings["correlatedRater"] = 0
+
+    # Only validate the required TSV schema columns (ignore helper columns like correlatedRater)
+    assert len(ratings[c.ratingTSVColumns].columns.values) == len(c.ratingTSVColumns) and all(
+      ratings[c.ratingTSVColumns].columns == c.ratingTSVColumns
     ), (
-      f"ratings columns don't match: \n{[col for col in ratings.columns if not col in c.ratingTSVColumns]} are extra columns, "
-      + f"\n{[col for col in c.ratingTSVColumns if not col in ratings.columns]} are missing."
-    )  # ensure constants file is up to date.
+      f"ratings columns don't match: \n{[col for col in ratings.columns if col not in c.ratingTSVColumns]} are extra columns, "
+      + f"\n{[col for col in c.ratingTSVColumns if col not in ratings.columns]} are missing."
+    )
 
   if noteStatusHistoryPath is None:
     noteStatusHistory = None
@@ -608,9 +614,12 @@ def write_tsv_local(df: pd.DataFrame, path: str, headers: bool = True) -> None:
     df: pd.DataFrame to write to disk.
     path: location of file on disk.
   """
-
-  assert path is not None
+  if df is None:
+    return
   assert df.to_csv(path, index=False, header=headers, sep="\t") is None
+
+  # assert path is not None
+  # assert df.to_csv(path, index=False, header=headers, sep="\t") is None
 
 
 def write_parquet_local(
@@ -626,8 +635,12 @@ def write_parquet_local(
     engine: engine to use. Defaults to 'pyarrow'.
   """
 
-  assert path is not None
+  if df is None:
+      return
   df.to_parquet(path, compression=compression, engine=engine)
+
+  # assert path is not None
+  # df.to_parquet(path, compression=compression, engine=engine)
 
 
 class CommunityNotesDataLoader(ABC):

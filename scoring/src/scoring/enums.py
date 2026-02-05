@@ -47,3 +47,8 @@ def scorers_from_csv(csv: str) -> Set[Scorers]:
     except KeyError:
       raise ValueError(f"Unknown value {value}")
   return set(values)
+
+
+# Default scorers for local runs / coursework. Keeping only MFCoreScorer makes runs much faster
+# on large ratings datasets and aligns with a "prescoring-only" workflow.
+DEFAULT_ENABLED_SCORERS: Set[Scorers] = {Scorers.MFCoreScorer}

@@ -1,5 +1,5 @@
 .env
-scoring/data
+scoring/src/data
 public
 _gen
 .DS_Store
