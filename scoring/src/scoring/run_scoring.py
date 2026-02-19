@@ -8,6 +8,8 @@ import concurrent.futures
 import copy
 import gc
 import io
+import json
+from dataclasses import asdict
 from itertools import chain
 import logging
 import multiprocessing
@@ -1326,11 +1328,18 @@ def run_prescoring(
     # scorer (i.e. we would not finish faster with >6 worker processes.)
     maxWorkers=maxWorkers or 6,
   )
+
+  
   (
     prescoringNoteModelOutput,
     prescoringRaterModelOutput,
     prescoringMetaOutput,
   ) = combine_prescorer_scorer_results(prescoringModelResultsFromAllScorers)
+  # Debug: write prescoring outputs to disk from this point
+  prescoringNoteModelOutput.to_parquet("pres_note_output.parquet", index=False)
+  prescoringRaterModelOutput.to_parquet("pre_rater_output.parquet", index=False)
+  with open("prescoring_meta_output.json", "w", encoding="utf-8") as f:
+    json.dump(asdict(prescoringMetaOutput), f, ensure_ascii=False, separators=(",", ":"), default=str)
   del prescoringModelResultsFromAllScorers
   del scorers
   gc.collect()
